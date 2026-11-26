@@ -1,0 +1,32 @@
+[
+  {
+    "id": "epc-01",
+    "name": "SuryaShakti EPC Solutions",
+    "rating": 4.9,
+    "reviews_count": 128,
+    "grade": "MNRE GRADE A",
+    "coverage": "Kolkata & West Bengal Discoms",
+    "installations": "1,450+ Homes",
+    "benchmark_rate_per_kw": 48000
+  },
+  {
+    "id": "epc-02",
+    "name": "Apex Green Energy Infra",
+    "rating": 4.8,
+    "reviews_count": 94,
+    "grade": "MNRE GRADE A",
+    "coverage": "Mumbai & Maharashtra Discoms",
+    "installations": "980+ Homes",
+    "benchmark_rate_per_kw": 47500
+  },
+  {
+    "id": "epc-03",
+    "name": "Pratham Solar Tech",
+    "rating": 4.9,
+    "reviews_count": 210,
+    "grade": "MNRE GRADE A",
+    "coverage": "Delhi NCR & UP Power Corp",
+    "installations": "2,100+ Homes",
+    "benchmark_rate_per_kw": 46800
+  }
+]

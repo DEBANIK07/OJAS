@@ -1658,65 +1658,8 @@
           maintenance, and seamless CFA subsidy filing.
         </p>
 
-        <!-- Vendors Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-8">
-          <!-- Vendor 1 -->
-          <div class="bg-slate-900/90 border border-slate-800 p-6 rounded-xl hover:border-amber-500/40 transition">
-            <div class="flex items-center justify-between mb-3">
-              <span
-                class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold px-2 py-0.5 rounded">MNRE
-                GRADE A</span>
-              <span class="text-amber-400 font-mono text-xs"><i class="fa-solid fa-star"></i> 4.9 (128 Reviews)</span>
-            </div>
-            <h3 class="text-lg font-bold text-slate-100 mb-1">SuryaShakti EPC Solutions</h3>
-            <p class="text-xs text-slate-400 mb-4"><i class="fa-solid fa-location-dot text-slate-500"></i> Kolkata &amp;
-              West Bengal Discoms</p>
-            <div class="border-t border-slate-800 pt-3 mb-4 space-y-1 text-xs font-mono text-slate-300">
-              <div>Installations: <span class="text-slate-100 font-bold">1,450+ Homes</span></div>
-              <div>Benchmark Rate: <span class="text-amber-400 font-bold">₹48,000 / kW</span></div>
-            </div>
-            <button class="btn-primary w-full text-xs" onclick="openVendorModal('SuryaShakti EPC Solutions')">Request
-              Instant Quote</button>
-          </div>
-
-          <!-- Vendor 2 -->
-          <div class="bg-slate-900/90 border border-slate-800 p-6 rounded-xl hover:border-amber-500/40 transition">
-            <div class="flex items-center justify-between mb-3">
-              <span
-                class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold px-2 py-0.5 rounded">MNRE
-                GRADE A</span>
-              <span class="text-amber-400 font-mono text-xs"><i class="fa-solid fa-star"></i> 4.8 (94 Reviews)</span>
-            </div>
-            <h3 class="text-lg font-bold text-slate-100 mb-1">Apex Green Energy Infra</h3>
-            <p class="text-xs text-slate-400 mb-4"><i class="fa-solid fa-location-dot text-slate-500"></i> Mumbai &amp;
-              Maharashtra Discoms</p>
-            <div class="border-t border-slate-800 pt-3 mb-4 space-y-1 text-xs font-mono text-slate-300">
-              <div>Installations: <span class="text-slate-100 font-bold">980+ Homes</span></div>
-              <div>Benchmark Rate: <span class="text-amber-400 font-bold">₹47,500 / kW</span></div>
-            </div>
-            <button class="btn-primary w-full text-xs" onclick="openVendorModal('Apex Green Energy Infra')">Request
-              Instant Quote</button>
-          </div>
-
-          <!-- Vendor 3 -->
-          <div class="bg-slate-900/90 border border-slate-800 p-6 rounded-xl hover:border-amber-500/40 transition">
-            <div class="flex items-center justify-between mb-3">
-              <span
-                class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold px-2 py-0.5 rounded">MNRE
-                GRADE A</span>
-              <span class="text-amber-400 font-mono text-xs"><i class="fa-solid fa-star"></i> 4.9 (210 Reviews)</span>
-            </div>
-            <h3 class="text-lg font-bold text-slate-100 mb-1">Pratham Solar Tech</h3>
-            <p class="text-xs text-slate-400 mb-4"><i class="fa-solid fa-location-dot text-slate-500"></i> Delhi NCR
-              &amp; UP Power Corp</p>
-            <div class="border-t border-slate-800 pt-3 mb-4 space-y-1 text-xs font-mono text-slate-300">
-              <div>Installations: <span class="text-slate-100 font-bold">2,100+ Homes</span></div>
-              <div>Benchmark Rate: <span class="text-amber-400 font-bold">₹46,800 / kW</span></div>
-            </div>
-            <button class="btn-primary w-full text-xs" onclick="openVendorModal('Pratham Solar Tech')">Request Instant
-              Quote</button>
-          </div>
-        </div>
+        <!-- Vendors Grid (populated dynamically from /api/v1/vendors) -->
+        <div id="vendorGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-8"></div>
       </div>
     </div>
   </div>
