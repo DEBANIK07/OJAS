@@ -2,7 +2,7 @@
 
 **AI-assisted satellite analysis for personalized rooftop solar potential and recommendations.**
 
-[Live MVP](https://debanik07.github.io/SIH-hackathon-repo/)
+[Live MVP](https://ojas-xmyy.onrender.com/)
 </div>
 
 OJAS is an India-first solar assessment platform that solves the biggest bottleneck to PM Surya Ghar adoption: no existing tool tells a homeowner if their roof *actually* qualifies. It combines AI rooftop detection, structural safety checks, and real physics-based energy modeling into one closed-loop system — from satellite scan to installer handoff.
