@@ -2,6 +2,10 @@ fastapi>=0.110.0
 uvicorn>=0.28.0
 pydantic>=2.6.0
 requests>=2.31.0
+# pandas retained for weather_service.py DataFrame processing
 pandas>=2.2.0
-pvlib>=0.10.0
-scipy>=1.12.0
+# psycopg2-binary for Postgres quote persistence (Neon / Supabase via DATABASE_URL)
+psycopg2-binary>=2.9.9
+# pandas, pvlib, and scipy removed: the generation formula is
+#   capacity_kw × avg_GHI × PERFORMANCE_RATIO × 365
+# No physical PV simulation library is needed.
