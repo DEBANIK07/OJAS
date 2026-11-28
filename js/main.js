@@ -5,7 +5,10 @@
  * and backend API interactions.
  */
 
-const API_BASE_URL = 'http://localhost:8000';
+// In production the backend serves the frontend from the same origin, so API calls
+// use an empty base (same-domain). In local dev with VS Code Live Server (port 5501)
+// we need to reach the separate uvicorn process on port 8000.
+const API_BASE_URL = (['localhost', '127.0.0.1'].includes(location.hostname) && location.port !== '8000') ? 'http://localhost:8000' : '';
 
 /* Multilingual Language Dictionary (English, Hindi, Bengali, Marathi) */
 const translations = {
@@ -347,6 +350,7 @@ window.addEventListener('load', () => {
   initWeatherChart();
   initRoiChart();
   initWardHeatmap();
+  loadVendors();
   initLiveIstSolarSimulator();
   initAiWeather();
   initWestBengalMatrix();
@@ -1353,7 +1357,7 @@ function triggerGeospatialScan() {
 async function loadWeatherHistory(lat, lon) {
   if (window.logStatus) window.logStatus('Fetching 10-year weather history...', 'pending');
   try {
-    const res = await fetch(`http://localhost:8000/api/weather-history?lat=${lat}&lon=${lon}`);
+    const res = await fetch(`${API_BASE_URL}/api/weather-history?lat=${lat}&lon=${lon}`);
     if (!res.ok) throw new Error(`Status ${res.status}`);
     const data = await res.json();
     if (window.logStatus) window.logStatus(`Weather data ready — using ${data.calculation_input.years_used} average`, 'success');
@@ -1427,33 +1431,23 @@ function handleHouseAreaInput() {
   calculateEstimation();
 }
 
+// Debounce handle so rapid input changes don't stack API calls
+let _estimationTimer = null;
+
 function calculateEstimation() {
-  const houseAreaInput = document.getElementById('inputHouseArea');
-  const houseArea = parseFloat(houseAreaInput?.value) || 1800;
-  const solarAreaInput = document.getElementById('inputSolarArea');
-  const material = document.getElementById('inputMaterial')?.value || 'rcc';
-  const usableFactor = ROOF_MATERIAL_FACTORS[material] || 0.75;
+  clearTimeout(_estimationTimer);
+  _estimationTimer = setTimeout(_doEstimation, 300);
+}
 
-  let solarArea = parseFloat(solarAreaInput?.value);
-  if (isNaN(solarArea) || solarArea <= 0) {
-    solarArea = Math.round(houseArea * usableFactor * 0.4815);
-    if (solarAreaInput) solarAreaInput.value = solarArea;
-  }
-
-  const electricityUnits = parseFloat(document.getElementById('inputElectricity')?.value) || 450;
+function _applyLocalEstimationFallback(solarArea, material) {
   const usableAreaSqm = (solarArea * 0.092903).toFixed(1);
-
-  // System Capacity (kWp) derivation dynamically powered by available solar rooftop area
-  // Standard Tier-1 ALMM modules (~440-540Wp) require ~120-130 sq ft of net usable area per kWp
   let capByArea = solarArea / 130;
   let systemCap = Math.max(1.0, Math.round(capByArea * 10) / 10);
 
-  // Gross Capital Cost calculation (~₹48,000 - ₹52,000 / kW base MNRE benchmark)
   let baseRatePerKw = 48000;
   if (material === 'tile' || material === 'wood') baseRatePerKw += 4000;
   let grossCost = systemCap * baseRatePerKw;
 
-  // PM Surya Ghar Subsidy (CFA Rules: up to 2kW @ ₹30k/kW; 2-3kW @ +₹18k/kW; capped at ₹78,000 for >=3kW)
   let subsidy = 0;
   if (systemCap <= 2) {
     subsidy = systemCap * 30000;
@@ -1464,131 +1458,160 @@ function calculateEstimation() {
   }
 
   let netCost = Math.max(0, grossCost - subsidy);
-
-  // Annual Generation, Financial Savings & Payback
-  let annualUnits = systemCap * 1450; // ~1450 units per kWp per year (Indian average)
-  let gridTariff = 7.0; // ₹7.0 / unit
-  let annualSavings = annualUnits * gridTariff;
+  let annualUnits = systemCap * 1450;
+  let annualSavings = annualUnits * 7.0;
   let paybackYears = annualSavings > 0 ? (netCost / annualSavings).toFixed(1) : '0.0';
 
-  // Update Highlight Cards
-  const estGross = document.getElementById('estGross');
-  const estSubsidy = document.getElementById('estSubsidy');
-  const estNet = document.getElementById('estNet');
-  const estPayback = document.getElementById('estPayback');
-  const estCapDetail = document.getElementById('estCapDetail');
-  const estAnnualSavings = document.getElementById('estAnnualSavings');
+  const el = id => document.getElementById(id);
+  if (el('estGross')) el('estGross').innerText = `₹${Math.round(grossCost).toLocaleString('en-IN')}`;
+  if (el('estSubsidy')) el('estSubsidy').innerText = `- ₹${Math.round(subsidy).toLocaleString('en-IN')}`;
+  if (el('estNet')) el('estNet').innerText = `₹${Math.round(netCost).toLocaleString('en-IN')}`;
+  if (el('estPayback')) el('estPayback').innerText = `${paybackYears} Years`;
+  if (el('estCapDetail')) el('estCapDetail').innerText = `${systemCap} kWp Tier-1 PV Grid System`;
+  if (el('estAnnualSavings')) el('estAnnualSavings').innerText = `Annual Savings: ₹${Math.round(annualSavings).toLocaleString('en-IN')}`;
 
-  if (estGross) estGross.innerText = `₹${Math.round(grossCost).toLocaleString('en-IN')}`;
-  if (estSubsidy) estSubsidy.innerText = `- ₹${Math.round(subsidy).toLocaleString('en-IN')}`;
-  if (estNet) estNet.innerText = `₹${Math.round(netCost).toLocaleString('en-IN')}`;
-  if (estPayback) estPayback.innerText = `${paybackYears} Years`;
-  if (estCapDetail) estCapDetail.innerText = `${systemCap} kWp Tier-1 PV Grid System`;
-  if (estAnnualSavings) estAnnualSavings.innerText = `Annual Savings: ₹${Math.round(annualSavings).toLocaleString('en-IN')}`;
-
-  // Itemized Breakdown Table
   let panelCost = Math.round(grossCost * 0.58);
   let inverterCost = Math.round(grossCost * 0.18);
   let structureCost = Math.round(grossCost * 0.11);
   let bosCost = Math.round(grossCost * 0.07);
   let netMeterCost = Math.round(grossCost - (panelCost + inverterCost + structureCost + bosCost));
+  let numPanels = Math.ceil((systemCap * 1000) / 440);
 
-  let numPanels = Math.ceil((systemCap * 1000) / 440); // 440W TOPCon Modules
+  if (el('specPanels')) el('specPanels').innerText = `${numPanels} Panels @ 440Wp (${systemCap} kWp Total)`;
+  if (el('costPanels')) el('costPanels').innerText = `₹${panelCost.toLocaleString('en-IN')}`;
+  if (el('costInverter')) el('costInverter').innerText = `₹${inverterCost.toLocaleString('en-IN')}`;
+  if (el('costStructure')) el('costStructure').innerText = `₹${structureCost.toLocaleString('en-IN')}`;
+  if (el('costBOS')) el('costBOS').innerText = `₹${bosCost.toLocaleString('en-IN')}`;
+  if (el('costNetMeter')) el('costNetMeter').innerText = `₹${netMeterCost.toLocaleString('en-IN')}`;
+  if (el('costFinalNet')) el('costFinalNet').innerText = `₹${Math.round(netCost).toLocaleString('en-IN')}`;
+  if (el('teleArea')) el('teleArea').innerText = `${usableAreaSqm} m²`;
+  if (el('teleCap')) el('teleCap').innerText = `${systemCap} kWp`;
 
-  const specPanels = document.getElementById('specPanels');
-  const costPanels = document.getElementById('costPanels');
-  const costInverter = document.getElementById('costInverter');
-  const costStructure = document.getElementById('costStructure');
-  const costBOS = document.getElementById('costBOS');
-  const costNetMeter = document.getElementById('costNetMeter');
-  const costFinalNet = document.getElementById('costFinalNet');
+  if (roiChartInstance) updateRoiChart(netCost, annualSavings);
+}
 
-  if (specPanels) specPanels.innerText = `${numPanels} Panels @ 440Wp (${systemCap} kWp Total)`;
-  if (costPanels) costPanels.innerText = `₹${panelCost.toLocaleString('en-IN')}`;
-  if (costInverter) costInverter.innerText = `₹${inverterCost.toLocaleString('en-IN')}`;
-  if (costStructure) costStructure.innerText = `₹${structureCost.toLocaleString('en-IN')}`;
-  if (costBOS) costBOS.innerText = `₹${bosCost.toLocaleString('en-IN')}`;
-  if (costNetMeter) costNetMeter.innerText = `₹${netMeterCost.toLocaleString('en-IN')}`;
-  if (costFinalNet) costFinalNet.innerText = `₹${Math.round(netCost).toLocaleString('en-IN')}`;
+async function _doEstimation() {
+  const houseAreaInput = document.getElementById('inputHouseArea');
+  const houseArea = parseFloat(houseAreaInput?.value) || 1800;
+  const solarAreaInput = document.getElementById('inputSolarArea');
+  const material = document.getElementById('inputMaterial')?.value || 'rcc';
+  const usableFactor = ROOF_MATERIAL_FACTORS[material] || 0.75;
 
-  // Update Telemetry Bar
-  const teleArea = document.getElementById('teleArea');
-  const teleCap = document.getElementById('teleCap');
-  if (teleArea) teleArea.innerText = `${usableAreaSqm} m²`;
-  if (teleCap) teleCap.innerText = `${systemCap} kWp`;
+  let solarAreaSqft = parseFloat(solarAreaInput?.value);
+  if (isNaN(solarAreaSqft) || solarAreaSqft <= 0) {
+    solarAreaSqft = Math.round(houseArea * usableFactor * 0.4815);
+    if (solarAreaInput) solarAreaInput.value = solarAreaSqft;
+  }
 
-  // Update 25-Year ROI Chart
+  const electricityUnits = parseFloat(document.getElementById('inputElectricity')?.value) || 450;
+  const panelType = document.getElementById('inputPanelType')?.value || 'monocrystalline';
+
+  const lat = window.ojasMap?.currentLat ?? 22.5726;
+  const lng = window.ojasMap?.currentLng ?? 88.3639;
+
+  const payload = {
+    polygon_area_m2: solarAreaSqft * 0.092903,
+    latitude: lat,
+    longitude: lng,
+    roof_material: material,
+    panel_type: panelType,
+    monthly_units: electricityUnits,
+    bill_offset_percent: 100.0,
+  };
+
+  const res = await fetchAPI('/api/v1/energy-estimate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.success || !res.data) {
+    _applyLocalEstimationFallback(solarAreaSqft, material);
+    return;
+  }
+
+  const d = res.data;
+  const fin = d.financial_environmental_impact || {};
+  const sys = d.system_sizing || {};
+  const area = d.area_derivation || {};
+
+  const grossCost = fin.gross_system_cost_inr ?? 0;
+  const subsidy = fin.pm_surya_ghar_subsidy_inr ?? 0;
+  const netCost = fin.net_system_cost_inr ?? 0;
+  const payback = fin.payback_period_years ?? 0;
+  const annualSavings = fin.annual_savings_inr ?? 0;
+  const systemCap = sys.system_capacity_kw ?? 0;
+  const numPanels = sys.num_panels ?? 0;
+
+  // Highlight cards
+  const el = id => document.getElementById(id);
+  if (el('estGross')) el('estGross').innerText = `₹${Math.round(grossCost).toLocaleString('en-IN')}`;
+  if (el('estSubsidy')) el('estSubsidy').innerText = `- ₹${Math.round(subsidy).toLocaleString('en-IN')}`;
+  if (el('estNet')) el('estNet').innerText = `₹${Math.round(netCost).toLocaleString('en-IN')}`;
+  if (el('estPayback')) el('estPayback').innerText = `${payback} Years`;
+  if (el('estCapDetail')) el('estCapDetail').innerText = `${systemCap} kWp Tier-1 PV Grid System`;
+  if (el('estAnnualSavings')) el('estAnnualSavings').innerText = `Annual Savings: ₹${Math.round(annualSavings).toLocaleString('en-IN')}`;
+
+  // Itemized cost breakdown — backend now provides cost_breakdown_inr
+  const bd = fin.cost_breakdown_inr || {};
+  const panelCost = Math.round(bd.panels_inr ?? grossCost * 0.58);
+  const inverterCost = Math.round(bd.inverter_inr ?? grossCost * 0.18);
+  const structCost = Math.round(bd.structure_inr ?? grossCost * 0.11);
+  const bosCost = Math.round(bd.bos_inr ?? grossCost * 0.07);
+  const netMeterCost = Math.round(bd.net_meter_inr ?? (grossCost - panelCost - inverterCost - structCost - bosCost));
+
+  if (el('specPanels')) el('specPanels').innerText = `${numPanels} Panels @ ${sys.panel_wattage_w ?? 400}Wp (${systemCap} kWp Total)`;
+  if (el('costPanels')) el('costPanels').innerText = `₹${panelCost.toLocaleString('en-IN')}`;
+  if (el('costInverter')) el('costInverter').innerText = `₹${inverterCost.toLocaleString('en-IN')}`;
+  if (el('costStructure')) el('costStructure').innerText = `₹${structCost.toLocaleString('en-IN')}`;
+  if (el('costBOS')) el('costBOS').innerText = `₹${bosCost.toLocaleString('en-IN')}`;
+  if (el('costNetMeter')) el('costNetMeter').innerText = `₹${netMeterCost.toLocaleString('en-IN')}`;
+  if (el('costFinalNet')) el('costFinalNet').innerText = `₹${Math.round(netCost).toLocaleString('en-IN')}`;
+
+  // Telemetry bar
+  if (el('teleArea')) el('teleArea').innerText = `${area.usable_area_m2 ?? (solarAreaSqft * 0.092903 * usableFactor).toFixed(1)} m²`;
+  if (el('teleCap')) el('teleCap').innerText = `${systemCap} kWp`;
+
+  // 25-Year ROI chart
   if (roiChartInstance) updateRoiChart(netCost, annualSavings);
 }
 
 /* 10-Year District Weather Telemetry & Solar Irradiance Collector */
-function getDistrictLocalData(lat, lng, districtHint) {
-  if (districtHint) {
-    const hintLower = districtHint.toLowerCase();
-    for (const key in DISTRICT_CLIMATE_DATABASE) {
-      const d = DISTRICT_CLIMATE_DATABASE[key];
-      if (hintLower.includes(key) || hintLower.includes(d.name.toLowerCase())) {
-        return d;
-      }
-    }
-  }
+// Kolkata fallback constants used only when the API and its own district fallback both fail.
+const _KOLKATA_GHI = [4.95, 5.08, 5.12, 4.90, 5.02, 5.15, 5.05, 5.18, 5.14, 5.21];
+const _KOLKATA_TEMP = [26.8, 27.1, 27.4, 27.0, 27.3, 27.6, 27.5, 27.8, 27.7, 28.0];
 
-  let bestMatch = DISTRICT_CLIMATE_DATABASE.kolkata;
-  let bestDist = Infinity;
-
-  for (const key in DISTRICT_CLIMATE_DATABASE) {
-    const d = DISTRICT_CLIMATE_DATABASE[key];
-    const dist = Math.sqrt(Math.pow(lat - d.lat, 2) + Math.pow(lng - d.lng, 2));
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestMatch = d;
-    }
-  }
-
-  return bestMatch;
-}
-
-async function updateDistrictWeather(lat = 22.5529, lng = 88.3524, districtHint = null) {
+async function updateDistrictWeather(lat = 22.5726, lng = 88.3639, districtHint = null) {
   let weatherData = null;
 
-  // Try fetching from backend API
+  // Fetch from backend — backend handles its own district fallback transparently
   const apiRes = await fetchAPI(`/api/v1/weather-history?lat=${lat}&lng=${lng}${districtHint ? `&district=${encodeURIComponent(districtHint)}` : ''}`);
-  const d = getDistrictLocalData(lat, lng, districtHint);
 
   if (apiRes.success && apiRes.data && apiRes.data.solar_radiation_ghi) {
+    const r = apiRes.data;
     weatherData = {
-      district: apiRes.data.district || d.name || 'Kolkata',
-      state: apiRes.data.state || d.state || 'INDIA',
-      years: apiRes.data.years || HISTORICAL_YEARS,
-      solar_radiation_ghi: apiRes.data.solar_radiation_ghi,
-      avg_temperature_c: apiRes.data.avg_temperature_c || d.temp,
-      avg_annual_ghi: apiRes.data.avg_annual_ghi ?? (d.ghi ? d.ghi[0] : 5.18),
-      avg_annual_sunny_days: apiRes.data.avg_annual_sunny_days ?? (d.sunny_days || 292),
-      mean_temp_c: apiRes.data.mean_temp_c ?? (d.temp ? d.temp[0] : 26.8),
-      dust_index: apiRes.data.dust_index || d.dust_index || 'Low',
-      panel_temp_loss_pct: apiRes.data.panel_temp_loss_pct || d.panel_temp_loss_pct || 3.9
+      district: r.district || districtHint || 'Kolkata',
+      state: r.state || 'INDIA',
+      years: r.years || HISTORICAL_YEARS,
+      solar_radiation_ghi: r.solar_radiation_ghi,
+      avg_temperature_c: r.avg_temperature_c || _KOLKATA_TEMP,
+      avg_annual_ghi: r.avg_annual_ghi ?? 5.14,
+      avg_annual_sunny_days: r.avg_annual_sunny_days ?? 284,
+      mean_temp_c: r.mean_temp_c ?? 27.0,
+      dust_index: r.dust_index || 'Moderate',
+      panel_temp_loss_pct: r.panel_temp_loss_pct || 3.9,
     };
   } else {
-    // Client-side meteorological calculation
-    const distOffset = Math.sqrt(Math.pow(lat - d.lat, 2) + Math.pow(lng - d.lng, 2));
-    const latFactor = distOffset > 0.5 ? 1.0 + (d.lat - lat) * 0.008 : 1.0;
-
-    const ghiSeries = d.ghi.map(v => parseFloat((v * latFactor).toFixed(2)));
-    const tempSeries = d.temp.map(v => parseFloat(v.toFixed(1)));
-    const avgGhi = parseFloat((ghiSeries.reduce((a, b) => a + b, 0) / ghiSeries.length).toFixed(2));
-    const avgTemp = parseFloat((tempSeries.reduce((a, b) => a + b, 0) / tempSeries.length).toFixed(1));
-
     weatherData = {
-      district: d.name || 'Kolkata',
-      state: d.state || 'INDIA',
+      district: districtHint || 'Kolkata',
+      state: 'INDIA',
       years: HISTORICAL_YEARS,
-      solar_radiation_ghi: ghiSeries,
-      avg_temperature_c: tempSeries,
-      avg_annual_ghi: avgGhi,
-      avg_annual_sunny_days: d.sunny_days,
-      mean_temp_c: avgTemp,
-      dust_index: d.dust_index,
-      panel_temp_loss_pct: d.panel_temp_loss_pct
+      solar_radiation_ghi: _KOLKATA_GHI,
+      avg_temperature_c: _KOLKATA_TEMP,
+      avg_annual_ghi: 5.11,
+      avg_annual_sunny_days: 284,
+      mean_temp_c: 27.4,
+      dust_index: 'Moderate',
+      panel_temp_loss_pct: 3.9,
     };
   }
 
@@ -1637,8 +1660,6 @@ function initWeatherChart() {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
 
-  const defaultKolkata = DISTRICT_CLIMATE_DATABASE.kolkata;
-
   weatherChartInstance = new Chart(ctx, {
     type: 'line',
     data: {
@@ -1646,7 +1667,7 @@ function initWeatherChart() {
       datasets: [
         {
           label: 'Solar Radiation (GHI kWh/m²/day)',
-          data: defaultKolkata.ghi,
+          data: _KOLKATA_GHI,
           borderColor: '#F59E0B',
           backgroundColor: 'rgba(245, 158, 11, 0.15)',
           fill: true,
@@ -1655,7 +1676,7 @@ function initWeatherChart() {
         },
         {
           label: 'Avg Temperature (°C)',
-          data: defaultKolkata.temp,
+          data: _KOLKATA_TEMP,
           borderColor: '#06B6D4',
           backgroundColor: 'transparent',
           borderDash: [5, 5],
@@ -2513,7 +2534,7 @@ function drawRooftopSim(hour, forceLive = false) {
 /* GEOAPIFY REVERSE GEOCODING & STATE-WISE SOLAR PANEL ADVISOR ENGINE         */
 /* ========================================================================= */
 
-let geoapifyApiKey = localStorage.getItem('ojas_geoapify_key') || '6c8f9db564b14d59a8501dc8a2ca82e6';
+let geoapifyApiKey = '';  // Key is now kept server-side; proxy at /api/v1/reverse-geocode
 let currentDetectedState = "West Bengal";
 
 // Comprehensive PDF Knowledge Base: Solar Panel Types Majorly Used in India (State & UT Wise)
@@ -3309,48 +3330,26 @@ const STATE_SOLAR_PANEL_DATA = {
 };
 
 function toggleGeoapifyKeyModal(show = true) {
-  const modal = document.getElementById('geoapifyKeyModal');
-  const input = document.getElementById('geoapifyKeyInput');
-  if (modal) {
-    if (show) {
-      modal.classList.add('active');
-      if (input) input.value = geoapifyApiKey;
-    } else {
-      modal.classList.remove('active');
-    }
-  }
+  // No-op: Geoapify key is now server-side. Modal retained for backward compat.
 }
 
 function saveGeoapifyKey() {
-  const input = document.getElementById('geoapifyKeyInput');
-  if (input) {
-    geoapifyApiKey = input.value.trim();
-    localStorage.setItem('ojas_geoapify_key', geoapifyApiKey);
-  }
+  // No-op: key is now managed via GEOAPIFY_API_KEY env var on the server.
   toggleGeoapifyKeyModal(false);
-  identifyStateAndRecommendPanels(currentSolarLat, currentSolarLng);
-  if (window.StatusLog) {
-    window.StatusLog.log(geoapifyApiKey ? 'Geoapify API Key saved.' : 'Geoapify key cleared. Using satellite geocoder.', 'INFO', 'GEOAPIFY');
-  }
 }
 
 async function identifyStateAndRecommendPanels(lat, lng, locationHint = null) {
   let stateName = null;
 
-  // 1. First attempt: Geoapify Reverse Geocoding API
-  if (geoapifyApiKey) {
-    try {
-      const geoRes = await fetch(`https://api.geoapify.com/v1/geocode/reverse?lat=${lat}&lon=${lng}&apiKey=${geoapifyApiKey}`);
-      if (geoRes.ok) {
-        const geoData = await geoRes.json();
-        if (geoData.features && geoData.features.length > 0) {
-          const props = geoData.features[0].properties || {};
-          stateName = props.state || props.county || props.region;
-        }
-      }
-    } catch (e) {
-      console.warn('Geoapify Reverse Geocode call failed:', e);
+  // 1. First attempt: server-side reverse-geocode proxy (key stays on server)
+  try {
+    const geoRes = await fetchAPI(`/api/v1/reverse-geocode?lat=${lat}&lng=${lng}`);
+    if (geoRes.success && geoRes.data?.features?.length > 0) {
+      const props = geoRes.data.features[0].properties || {};
+      stateName = props.state || props.county || props.region;
     }
+  } catch (e) {
+    console.warn('Reverse-geocode proxy failed:', e);
   }
 
   // 2. Second attempt: Check locationHint string if provided from search
@@ -3591,113 +3590,94 @@ function applyRecommendedPanel(panelType, panelName) {
   alert(`Applied ${panelName} (Recommended for ${currentDetectedState}) to your solar calculation configuration!`);
 }
 
-/* District GIS Heatmap Dynamic Generator */
-function updateDistrictWards(districtName = 'Kolkata') {
+/* District GIS Heatmap Dynamic Generator — data from /api/v1/district-wards */
+async function updateDistrictWards(districtName = 'Kolkata') {
   const grid = document.getElementById('wardHeatmapGrid');
   if (!grid) return;
   grid.innerHTML = '';
 
-  const dLower = districtName.toLowerCase();
-  let areas = [];
-
-  if (dLower.includes('delhi')) {
-    areas = ["Connaught Place", "Chanakyapuri", "Karol Bagh", "Dwarka Sec 6", "Dwarka Sec 12", "Rohini Sec 3",
-             "Rohini Sec 10", "Vasant Kunj", "Saket", "Hauz Khas", "Lajpat Nagar", "Defense Colony",
-             "Greater Kailash", "Nehru Place", "Mayur Vihar 1", "Mayur Vihar 2", "Janakpuri", "Rajouri Garden",
-             "Pitampura", "Model Town", "Civil Lines", "Chandni Chowk", "Paharganj", "Sarita Vihar",
-             "Jasola", "Okhla Phase 3", "Patparganj", "Preet Vihar", "Shahdara", "Kashmere Gate",
-             "Paschim Vihar", "Punjabi Bagh", "Vikaspuri", "Uttam Nagar", "Narela", "Najafgarh"];
-  } else if (dLower.includes('jaipur')) {
-    areas = ["C-Scheme", "Malviya Nagar", "Mansarovar North", "Mansarovar South", "Vaishali Nagar", "Raja Park",
-             "Bapu Nagar", "Civil Lines", "Tonk Road", "Jagatpura", "Sitapura", "Sanganer",
-             "Ajmer Road", "Vidhyadhar Nagar", "Shastri Nagar", "Bani Park", "Jhotwara", "Murlipura",
-             "Amer", "Hawa Mahal", "Johari Bazar", "MI Road", "Sodala", "Gopalpura",
-             "Pratap Nagar", "Durgapura", "Barkat Nagar", "Lal Kothi", "Adarsh Nagar", "Tilak Nagar",
-             "Sirsi Road", "Kalwar Road", "Agra Road", "Delhi Road", "Kukas", "Chomu"];
-  } else if (dLower.includes('bengaluru') || dLower.includes('bangalore')) {
-    areas = ["Indiranagar", "Koramangala", "HSR Layout", "Whitefield", "Electronic City", "Jayanagar",
-             "JP Nagar", "BTM Layout", "Marathahalli", "Hebbal", "Malleshwaram", "Rajajinagar",
-             "Basavanagudi", "Frazer Town", "Sadashivanagar", "Yelahanka", "Banashankari", "Bellandur",
-             "Sarjapur Road", "Varthur", "Bannerghatta", "Kalyan Nagar", "Kammanahalli", "RT Nagar",
-             "Ulsoor", "MG Road", "Cunningham Road", "Richmond Town", "Domlur", "Kaggadasapura",
-             "Vidyaranyapura", "Sahakara Nagar", "Peenya", "Yeshwanthpur", "Vijayanagar", "Nagarbhavi"];
-  } else if (dLower.includes('mumbai')) {
-    areas = ["Colaba", "Marine Lines", "Fort", "Malabar Hill", "Nariman Point", "Worli",
-             "Lower Parel", "Dadar North", "Dadar South", "Bandra West", "Bandra East", "Khar",
-             "Santacruz", "Vile Parle", "Andheri West", "Andheri East", "Juhu", "Goregaon West",
-             "Goregaon East", "Malad", "Kandivali", "Borivali", "Dahisar", "Powai",
-             "Ghatkopar", "Vikhroli", "Bhandup", "Mulund", "Kurla", "Chembur",
-             "Sion", "Matunga", "Wadala", "Byculla", "Parel", "Mahim"];
-  } else if (dLower.includes('nagpur')) {
-    areas = ["Civil Lines", "Dharampeth", "Ramdaspeth", "Sitabuldi", "Dhantoli", "Congress Nagar",
-             "Pratap Nagar", "Laxmi Nagar", "Bajaj Nagar", "Trimurti Nagar", "Khamla", "Wardha Road",
-             "Manewada", "Ayodhya Nagar", "Nandanvan", "Sakkardara", "Mahal", "Gandhibagh",
-             "Itwari", "Hansapuri", "Jaripatka", "Kadbi Chowk", "Sadar", "Katol Road",
-             "Gorewada", "Zingabai Takli", "Mankapur", "Friend's Colony", "Seminary Hills", "Ravi Nagar",
-             "Wadi", "MIDC Hingna", "Butibori", "MIHAN", "Pardi", "Kalamna"];
-  } else {
-    areas = ["Shyambazar", "Bagbazar", "Cossipore", "Maniktala", "Kankurgachi", "Ultadanga",
-             "Salt Lake Sec 1", "Salt Lake Sec 2", "New Town North", "Rajarhat", "Sealdah", "College Street",
-             "Gariahat", "Park Street", "Bhowanipore", "Alipore", "Ballygunge", "Dhakuria",
-             "Jadavpur", "Tollygunge", "Behala West", "Behala East", "Garia", "Narendrapur",
-             "Sonarpur", "Barasat North", "Barasat South", "Madhyamgram", "Sodepur", "Barrackpore",
-             "Howrah Station", "Shibpur", "Bally", "Dankuni", "Serampore", "Chandannagar"];
+  const res = await fetchAPI(`/api/v1/district-wards?district=${encodeURIComponent(districtName)}`);
+  if (!res.success || !res.data?.wards) {
+    if (window.StatusLog) window.StatusLog.log(`Ward data unavailable for ${districtName}`, 'WARN', 'GIS');
+    return;
   }
 
-  // Seeded deterministic pseudo-random ward scores
-  let seed = 0;
-  for (let i = 0; i < districtName.length; i++) seed += districtName.charCodeAt(i);
+  const wards = res.data.wards;
 
-  const wardData = areas.map((name, i) => {
-    const pseudoRand = Math.sin(seed + i * 1.7) * 10000;
-    const norm = pseudoRand - Math.floor(pseudoRand);
-    const score = parseFloat((7.6 + norm * 2.2).toFixed(1));
-    const mwp = parseFloat((3.2 + norm * 8.5).toFixed(1));
-    const headroom = Math.floor(45 + norm * 51);
-    return {
-      name: `Ward ${i + 1} (${name})`,
-      score,
-      pot: `${mwp} MWp`,
-      headroom: `${headroom}%`
-    };
-  });
-
-  wardData.forEach((w, idx) => {
+  wards.forEach((w, idx) => {
+    const score = parseFloat(w.score) || 0;
     const cell = document.createElement('div');
     let bgColor = 'bg-amber-500';
-    if (w.score >= 8.8) bgColor = 'bg-emerald-500';
-    else if (w.score < 7.8) bgColor = 'bg-slate-700';
+    if (score >= 8.8) bgColor = 'bg-emerald-500';
+    else if (score < 7.8) bgColor = 'bg-slate-700';
 
     cell.className = `${bgColor} rounded-md opacity-80 hover:opacity-100 hover:scale-105 transition cursor-pointer flex items-center justify-center text-[10px] font-mono font-bold text-slate-950`;
-    cell.innerText = w.score.toFixed(1);
+    cell.innerText = score.toFixed(1);
 
-    cell.onclick = function() {
+    cell.onclick = function () {
       const wardName = document.getElementById('selectedWardName');
       const wardScore = document.getElementById('selectedWardScore');
       const wardPot = document.getElementById('selectedWardPot');
       const wardHeadroom = document.getElementById('selectedWardHeadroom');
 
       if (wardName) wardName.innerText = `SELECTED: ${w.name.toUpperCase()}`;
-      if (wardScore) wardScore.innerText = `${w.score} / 10`;
-      if (wardPot) wardPot.innerText = w.pot;
+      if (wardScore) wardScore.innerText = `${score} / 10`;
+      if (wardPot) wardPot.innerText = w.potential;
       if (wardHeadroom) wardHeadroom.innerText = `${w.headroom} Capacity Available`;
 
       if (window.StatusLog) {
-        window.StatusLog.log(`Inspecting ${w.name}: Score ${w.score}, Potential ${w.pot}, Feeder headroom ${w.headroom}`, 'INFO', 'GIS');
+        window.StatusLog.log(`Inspecting ${w.name}: Score ${score}, Potential ${w.potential}, Feeder headroom ${w.headroom}`, 'INFO', 'GIS');
       }
     };
 
     grid.appendChild(cell);
 
-    // Default select first high-scoring ward
-    if (idx === 0) {
-      cell.click();
-    }
+    if (idx === 0) cell.click();
   });
 }
 
 function initWardHeatmap() {
   updateDistrictWards('Kolkata');
+}
+
+/* Empanelled Vendors Directory — populated from /api/v1/vendors */
+async function loadVendors() {
+  const grid = document.getElementById('vendorGrid');
+  if (!grid) return;
+
+  const res = await fetchAPI('/api/v1/vendors');
+  if (!res.success || !Array.isArray(res.data?.vendors)) {
+    grid.innerHTML = '<p class="text-xs font-mono text-slate-400 col-span-full">Unable to load empanelled vendors.</p>';
+    return;
+  }
+
+  grid.innerHTML = '';
+  res.data.vendors.forEach(v => {
+    const card = document.createElement('div');
+    card.className = 'bg-slate-900/90 border border-slate-800 p-6 rounded-xl hover:border-amber-500/40 transition';
+
+    const rateFormatted = Number(v.benchmark_rate_per_kw || 0).toLocaleString('en-IN');
+    card.innerHTML = `
+      <div class="flex items-center justify-between mb-3">
+        <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold px-2 py-0.5 rounded">${v.grade}</span>
+        <span class="text-amber-400 font-mono text-xs"><i class="fa-solid fa-star"></i> ${v.rating} (${v.reviews_count} Reviews)</span>
+      </div>
+      <h3 class="text-lg font-bold text-slate-100 mb-1"></h3>
+      <p class="text-xs text-slate-400 mb-4"><i class="fa-solid fa-location-dot text-slate-500"></i> <span class="vendor-coverage"></span></p>
+      <div class="border-t border-slate-800 pt-3 mb-4 space-y-1 text-xs font-mono text-slate-300">
+        <div>Installations: <span class="text-slate-100 font-bold vendor-installs"></span></div>
+        <div>Benchmark Rate: <span class="text-amber-400 font-bold">₹${rateFormatted} / kW</span></div>
+      </div>
+      <button class="btn-primary w-full text-xs">Request Instant Quote</button>
+    `;
+
+    card.querySelector('h3').textContent = v.name;
+    card.querySelector('.vendor-coverage').textContent = v.coverage;
+    card.querySelector('.vendor-installs').textContent = v.installations;
+    card.querySelector('button').addEventListener('click', () => openVendorModal(v.name));
+
+    grid.appendChild(card);
+  });
 }
 
 /* Empanelled Vendor Quote Request Modal */
@@ -3801,41 +3781,17 @@ async function fetchAPI(endpoint, options = {}) {
     if (window.StatusLog) {
       window.StatusLog.log(`Backend offline at ${API_BASE_URL} (${duration}ms). Using local telemetry engine.`, 'WARN', 'FETCH');
     }
-    return getMockAPIResponse(endpoint, options);
+    return { success: false, error: 'Backend unreachable' };
   }
-}
 
-function getMockAPIResponse(endpoint, options) {
-  if (endpoint.includes('/health')) {
-    return { success: true, data: { status: 'ONLINE', platform: 'OJAS Sovereign Solar Engine' } };
-  }
-  if (endpoint.includes('/solar-potential')) {
-    return {
-      success: true,
-      data: {
-        annual_generation_kwh: 5510,
-        estimated_capacity_kw: 3.8,
-        subsidy_amount_inr: 78000,
-        payback_years: 2.9,
-        co2_offset_tons: 4.5
-      }
-    };
-  }
-  if (endpoint.includes('/vendor-quote')) {
-    return {
-      success: true,
-      data: {
-        status: 'SUBMITTED',
-        tracking_id: 'OJAS-SURYA-' + Math.floor(10000 + Math.random() * 90000)
-      }
-    };
-  }
-  return { success: true, data: { message: 'Local engine OK', endpoint } };
+  // Show a visible "Backend offline" banner if one exists in the HTML
+  const banner = document.getElementById('backendOfflineBanner');
+  if (banner) banner.classList.remove('hidden');
 }
 
 async function checkBackendHealth() {
   if (window.StatusLog) {
-    window.StatusLog.log('Connecting to OJAS Gateway: http://localhost:8000/api/v1/health...', 'INFO', 'SYSTEM');
+    window.StatusLog.log(`Connecting to OJAS Gateway: ${API_BASE_URL}/api/v1/health...`, 'INFO', 'SYSTEM');
   }
   await fetchAPI('/api/v1/health');
 }
@@ -3852,6 +3808,7 @@ window.triggerGeospatialScan = triggerGeospatialScan;
 window.calculateEstimation = calculateEstimation;
 window.drawRooftopSim = drawRooftopSim;
 window.openVendorModal = openVendorModal;
+window.loadVendors = loadVendors;
 window.closeVendorModal = closeVendorModal;
 window.submitVendorApplication = submitVendorApplication;
 window.updateDistrictWeather = updateDistrictWeather;

@@ -4,31 +4,63 @@ Fetches 10 years of historical solar & meteorological data from Open-Meteo Archi
 converts units (MJ/m²/day to kWh/m²/day via /3.6), and computes derived views:
 - calculation_input: 5-year average (used for generation calculation)
 - yearly_variation: 10-year yearly breakdown (used for frontend variation graph)
+
+Caching: results are cached per (lat_r2, lng_r2, end_year) so repeated calls for the
+same location within the same calendar year hit the in-process cache instead of
+re-downloading 10 years of daily data from Open-Meteo on every request.
 """
 
+import logging
 from datetime import date
+from functools import lru_cache
 from typing import Dict, Any, List, Optional
 import requests
 import pandas as pd
 
+from backend.config import OPEN_METEO_ARCHIVE_URL, HTTP_TIMEOUT_S
 
-def fetch_weather_history(lat: float, lng: float = 79.0882, lon: Optional[float] = None) -> Dict[str, Any]:
+logger = logging.getLogger("ojas.weather")
+
+
+# ---------------------------------------------------------------------------
+# Private cached fetcher — keyed on rounded coordinates + completed year
+# ---------------------------------------------------------------------------
+
+@lru_cache(maxsize=512)
+def _fetch_cached(lat_r: float, lng_r: float, end_year: int) -> Dict[str, Any]:
     """
-    Step 1 — Fetch 10 years of daily data from Open-Meteo Archive API (one API call covers both needs).
+    Downloads 10 years of daily data for the given (rounded) location.
+    Results are cached for the lifetime of the process; because the cache key
+    includes end_year (last fully-completed year), it naturally expires each
+    January when the year rolls over.
     """
-    effective_lng = lng if lon is None else lon
-    end_year = date.today().year - 1  # last fully completed year
-    start_year = end_year - 9         # 10 years total
+    start_year = end_year - 9  # 10 years total
     url = (
-        f"https://archive-api.open-meteo.com/v1/archive"
-        f"?latitude={lat}&longitude={effective_lng}"
+        f"{OPEN_METEO_ARCHIVE_URL}"
+        f"?latitude={lat_r}&longitude={lng_r}"
         f"&start_date={start_year}-01-01&end_date={end_year}-12-31"
         f"&daily=shortwave_radiation_sum,temperature_2m_mean,wind_speed_10m_mean"
         f"&timezone=auto"
     )
-    response = requests.get(url, timeout=15)
+    logger.debug("Open-Meteo fetch: lat=%.2f lng=%.2f years=%d–%d", lat_r, lng_r, start_year, end_year)
+    response = requests.get(url, timeout=HTTP_TIMEOUT_S)
     response.raise_for_status()
     return response.json()
+
+
+def fetch_weather_history(lat: float, lng: float, lon: Optional[float] = None) -> Dict[str, Any]:
+    """
+    Step 1 — Fetch 10 years of daily data from Open-Meteo Archive API.
+    Both lat and lng are required (no Nagpur default).
+    Results are served from an in-process LRU cache keyed on coordinates
+    rounded to 2 decimal places (~1 km grid) and the current end year.
+    """
+    effective_lng = lng if lon is None else lon
+    return _fetch_cached(
+        round(float(lat), 2),
+        round(float(effective_lng), 2),
+        date.today().year - 1,
+    )
 
 
 def process_weather_data(raw_json: Dict[str, Any]) -> pd.DataFrame:
@@ -92,7 +124,7 @@ def derive_weather_views(df: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
-def get_weather_history_data(lat: float, lng: float = 79.0882, lon: Optional[float] = None) -> Dict[str, Any]:
+def get_weather_history_data(lat: float, lng: float, lon: Optional[float] = None) -> Dict[str, Any]:
     """
     Main entry point for fetching and deriving 10-year historical weather data.
     """
